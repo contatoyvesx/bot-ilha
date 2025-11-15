@@ -10,7 +10,7 @@ RUN apt-get update \
 WORKDIR /app
 
 # Copy application code
-COPY bot.json ./bot.py
+COPY . .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip \
