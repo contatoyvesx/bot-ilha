@@ -1,0 +1,118 @@
+from fastapi import FastAPI, Request
+from fastapi.responses import PlainTextResponse
+from openai import OpenAI
+import requests
+import os
+
+app = FastAPI()
+
+# 🔐 Coloque isso no ambiente (Railway, Render, etc.)
+VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "SUA_SENHA_DE_VERIFICACAO")
+WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")        # Token de acesso da página (Bearer)
+PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")      # ID do número do WhatsApp
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")        # Chave da API da OpenAI
+
+client = OpenAI(api_key=OPENAI_API_KEY)
+
+
+# ==========================
+# 1) VERIFICAÇÃO DO WEBHOOK
+# ==========================
+@app.get("/webhook")
+async def verify(request: Request):
+    mode = request.query_params.get("hub.mode")
+    token = request.query_params.get("hub.verify_token")
+    challenge = request.query_params.get("hub.challenge")
+
+    if mode == "subscribe" and token == VERIFY_TOKEN:
+        return PlainTextResponse(content=challenge, status_code=200)
+
+    return PlainTextResponse(content="Erro de verificação", status_code=403)
+
+
+# ==========================
+# 2) RECEBIMENTO DAS MENSAGENS
+# ==========================
+@app.post("/webhook")
+async def webhook(request: Request):
+    data = await request.json()
+    # print(data)  # útil para debugar
+
+    try:
+        entry = data["entry"][0]
+        changes = entry["changes"][0]
+        value = changes["value"]
+
+        messages = value.get("messages")
+        if not messages:
+            return {"status": "no_message"}
+
+        message = messages[0]
+        from_number = message["from"]                     # ex: "5511999999999"
+        text = message.get("text", {}).get("body", "")
+
+        if not text:
+            # se não for texto (áudio, imagem etc), você pode tratar diferente
+            send_whatsapp_message(from_number, "Só consigo responder mensagens de texto por enquanto 😊")
+            return {"status": "no_text"}
+
+        # ==========================
+        # 3) CHAMADA AO CHATGPT
+        # ==========================
+        completion = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Você é um assistente virtual em português, educado, objetivo e claro. "
+                        "Responda de forma curta, sem markdown."
+                    ),
+                },
+                {"role": "user", "content": text},
+            ],
+        )
+
+        reply = completion.choices[0].message.content.strip()
+
+        # ==========================
+        # 4) RESPONDER PELO WHATSAPP
+        # ==========================
+        send_whatsapp_message(from_number, reply)
+
+    except Exception as e:
+        print("Erro no webhook:", e)
+
+    return {"status": "ok"}
+
+
+# ==========================
+# FUNÇÃO PARA ENVIAR MENSAGEM
+# ==========================
+def send_whatsapp_message(to: str, body: str):
+    url = f"https://graph.facebook.com/v20.0/{PHONE_NUMBER_ID}/messages"
+
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "text",
+        "text": {"body": body},
+    }
+
+    response = requests.post(url, headers=headers, json=payload)
+    if not response.ok:
+        print("Erro ao enviar mensagem:", response.status_code, response.text)
+
+
+# ==========================
+# PARA RODAR LOCAL
+# ==========================
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
