@@ -33,7 +33,7 @@ async def verify_token(request: Request):
 
 
 # ===============================
-# 2) RECEBE AS MENSAGENS DO WHATSAPP
+# 2) RECEBE AS MENSAGENS DO WHATSApp
 # ===============================
 @app.post("/webhook")
 async def receive_message(request: Request):
